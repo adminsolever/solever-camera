@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#ee4523">
+  <title>Solever · Kamera Dokumentasi</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172330;background:#f5f6f9;font-synthesis:none}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh}button{font:inherit;cursor:pointer}
+    .top{padding:14px 17px;background:white;border-bottom:1px solid #e6e9ed;display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .brand{font-size:24px;font-weight:900;letter-spacing:-1.1px;color:#ee4523}.tag{font-size:11px;font-weight:800;color:#667085;letter-spacing:1.4px}
+    .wrap{max-width:760px;margin:auto;padding:15px;display:grid;gap:14px}
+    .title{display:flex;align-items:start;justify-content:space-between;gap:10px}.title h1{font-size:21px;margin:0 0 4px}.title p{font-size:13px;color:#657184;margin:0}
+    .count{white-space:nowrap;background:#fff0e9;border-radius:30px;padding:9px 12px;color:#b93719;font-weight:850;font-size:13px}
+    .preview{position:relative;overflow:hidden;border-radius:19px;background:#111923;aspect-ratio:3/4;max-height:68vh;display:grid;place-items:center;box-shadow:0 12px 35px #10182822}
+    video{width:100%;height:100%;object-fit:cover;display:block}.start{position:absolute;inset:0;display:grid;place-content:center;gap:12px;background:#101820d9;color:white;text-align:center;padding:25px}.start[hidden]{display:none}
+    .start strong{font-size:18px}.start p{font-size:13px;color:#d7dce6;line-height:1.5;max-width:300px}
+    button{border:1px solid #d9dfe8;border-radius:12px;padding:13px 15px;background:white;font-weight:800;color:#394455}
+    button.primary{background:#ee4523;border-color:#ee4523;color:white}button:disabled{opacity:.55;cursor:not-allowed}
+    .actions{display:grid;grid-template-columns:1fr 2fr;gap:9px}.actions .primary{font-size:16px;padding:18px}
+    .status{background:white;border:1px solid #e4e8ee;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.45;color:#526071}
+    .status.ok{background:#effaf3;border-color:#bfe5cd;color:#166843}.status.error{background:#fff1ed;border-color:#ffc6b8;color:#a12e16}
+    .foot{font-size:12px;color:#667085;line-height:1.6}.foot strong{color:#374151}
+    @media(min-width:600px){.preview{aspect-ratio:4/3}.wrap{padding:20px}.top{padding:16px 30px}}
+  </style>
+</head>
+<body>
+  <header class="top"><div><div class="brand">solever</div><div class="tag">SHOE CARE · KAMERA INTERNAL</div></div><button id="close" type="button">Tutup</button></header>
+  <main class="wrap">
+    <div class="title"><div><h1 id="pair">Dokumentasi Before</h1><p>Kamera tetap aktif setelah setiap foto tersimpan.</p></div><div id="counter" class="count">0 / 10</div></div>
+    <section class="preview" aria-label="Tampilan kamera langsung">
+      <video id="video" autoplay playsinline muted></video>
+      <div id="startScreen" class="start"><strong>Kamera dokumentasi</strong><p>Izinkan penggunaan kamera. Foto akan dikirim hanya ke WebApp Solever, tanpa disimpan di halaman ini.</p><button id="start" class="primary" type="button">Aktifkan Kamera</button></div>
+    </section>
+    <div class="actions"><button id="flip" type="button" disabled>Putar Kamera</button><button id="capture" class="primary" type="button" disabled>Ambil Foto</button></div>
+    <div id="status" class="status" role="status" aria-live="polite">Menghubungkan ke halaman kasir...</div>
+    <p class="foot"><strong>Minimal 1 foto per pasang, maksimal 10.</strong> Selesaikan foto yang dibutuhkan, lalu kembali ke halaman Kasir untuk mengesahkan order. Jangan tutup halaman Kasir selama memotret.</p>
+  </main>
+  <script>
+    (function(){
+      'use strict';
+      const query=new URLSearchParams(location.search);
+      const channel=query.get('channel')||'';
+      const requestedOrigin=query.get('parentOrigin')||'';
+      let parentOrigin='',stream=null,ready=false,connected=false,pending=false;
+      let facing='environment',count=Math.max(0,Math.min(10,Number(query.get('count'))||0)),timeoutId=null;
+      const $=id=>document.getElementById(id);
+      try{
+        const parsed=new URL(requestedOrigin);
+        if(parsed.protocol!=='https:'||parsed.origin!==requestedOrigin||!/^[a-zA-Z0-9_-]{12,100}$/.test(channel))throw new Error('Invalid connection');
+        parentOrigin=parsed.origin;
+      }catch(error){$('status').className='status error';$('status').textContent='Tautan kamera tidak valid. Buka kamera melalui Kasir Solever.';}
+      $('pair').textContent='Foto Before · Pasang '+(query.get('pairNo')||'?').slice(0,3);
+      function status(message,kind=''){$('status').className='status'+(kind?' '+kind:'');$('status').textContent=message;}
+      function drawCount(){$('counter').textContent=count+' / 10';$('capture').disabled=!ready||!connected||pending||count>=10;
+        if(count>=10)status('Maksimal 10 foto tercapai. Kembali ke halaman Kasir untuk melanjutkan.','ok');}
+      function send(data){if(!window.opener||!parentOrigin)return false;
+        try{window.opener.postMessage({...data,channel},parentOrigin);return true;}catch(error){return false;}}
+      function hello(){if(!connected&&parentOrigin)send({type:'SOLEVER_CAMERA_HELLO'});}
+      window.addEventListener('message',event=>{
+        if(event.origin!==parentOrigin||event.source!==window.opener||!event.data||event.data.channel!==channel)return;
+        const msg=event.data;
+        if(msg.type==='SOLEVER_CAMERA_STATE'){
+          connected=true;count=Math.max(0,Math.min(10,Number(msg.count)||0));drawCount();
+          if(count<10)status('Terhubung ke Kasir. Aktifkan kamera lalu ambil foto.','ok');
+        }else if(msg.type==='SOLEVER_CAMERA_ACK'){
+          clearTimeout(timeoutId);pending=false;
+          if(msg.ok){count=Math.max(0,Math.min(10,Number(msg.count)||count+1));status('Foto '+count+' berhasil disimpan di Solever. Kamera tetap menyala.','ok');}
+          else status(msg.error||'Foto gagal disimpan. Silakan coba lagi.','error');
+          drawCount();
+        }
+      });
+      async function startCamera(){
+        if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('Browser tidak mendukung kamera langsung. Gunakan tombol foto cadangan di Kasir.');
+        if(stream)stream.getTracks().forEach(track=>track.stop());
+        stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:960}}});
+        $('video').srcObject=stream;await $('video').play();ready=true;
+        $('startScreen').hidden=true;$('flip').disabled=false;drawCount();
+        if(!connected)status('Kamera aktif, tetapi koneksi ke Kasir belum siap. Pastikan tab Kasir tetap terbuka.');
+      }
+      $('start').addEventListener('click',async()=>{
+        $('start').disabled=true;
+        try{await startCamera();}catch(error){status('Kamera tidak tersedia: '+(error.message||'izin kamera ditolak')+'. Periksa izin HTTPS/browser.','error');}
+        finally{$('start').disabled=false;}
+      });
+      $('flip').addEventListener('click',async()=>{
+        if(pending)return;ready=false;drawCount();facing=facing==='environment'?'user':'environment';
+        try{await startCamera();}catch(error){status('Tidak dapat beralih kamera: '+error.message,'error');$('startScreen').hidden=false;}
+      });
+      function compressedSnapshot(){
+        const video=$('video');if(!video.videoWidth||!video.videoHeight)throw new Error('Kamera belum menampilkan gambar.');
+        let scale=Math.min(1,1280/Math.max(video.videoWidth,video.videoHeight));
+        const canvas=document.createElement('canvas');let encoded='';
+        for(let attempt=0;attempt<5;attempt++){
+          canvas.width=Math.max(1,Math.round(video.videoWidth*scale));canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+          const ctx=canvas.getContext('2d');ctx.drawImage(video,0,0,canvas.width,canvas.height);
+          encoded=canvas.toDataURL('image/jpeg',.72).split(',')[1];
+          if(encoded.length*3/4<=850000)break;
+          scale*=.72;
+        }
+        if(encoded.length*3/4>900000)throw new Error('Foto terlalu besar. Coba ulangi dengan pencahayaan cukup.');
+        return encoded;
+      }
+      $('capture').addEventListener('click',()=>{
+        if(!ready||pending||!connected||count>=10)return;
+        try{
+          const base64=compressedSnapshot();pending=true;drawCount();status('Menyimpan foto '+(count+1)+' ke database Solever...');
+          if(!send({type:'SOLEVER_CAMERA_SHOT',mime:'image/jpeg',base64}))throw new Error('Hubungan ke Kasir terputus.');
+          timeoutId=setTimeout(()=>{pending=false;drawCount();status('Balasan Kasir terlalu lama. Periksa foto yang sudah tersimpan di Kasir sebelum mencoba lagi.','error');hello();},45000);
+        }catch(error){pending=false;drawCount();status(error.message,'error');}
+      });
+      function closeCamera(){if(stream){stream.getTracks().forEach(track=>track.stop());stream=null;}}
+      $('close').addEventListener('click',()=>{closeCamera();window.close();});
+      window.addEventListener('pagehide',closeCamera);
+      if(!window.opener)status('Kamera harus dibuka dari tombol Kasir Solever. Gunakan browser yang mendukung tab baru.','error');
+      else if(parentOrigin){hello();setTimeout(hello,900);setTimeout(hello,2500);setTimeout(hello,5000);}
+      drawCount();
+    })();
+  </script>
+</body>
+</html>
